@@ -10,7 +10,7 @@ import (
 	"github.com/cccccxxy/lsmart/memtable"
 )
 
-// lsm tree 配置项聚合
+// Config lsm tree 配置项聚合
 type Config struct {
 	Dir      string // sst 文件存放的目录
 	MaxLevel int    // lsm tree 总共多少层
@@ -25,7 +25,7 @@ type Config struct {
 	MemTableConstructor memtable.MemTableConstructor // memtable 构造器，默认为跳表
 }
 
-// 配置文件构造器.
+// NewConfig 配置文件构造器.
 func NewConfig(dir string, opts ...ConfigOption) (*Config, error) {
 	c := Config{
 		Dir:           dir, // sstable 文件所在的目录路径
@@ -71,17 +71,17 @@ func (c *Config) check() error {
 	return nil
 }
 
-// 配置项
+// ConfigOption 配置项
 type ConfigOption func(*Config)
 
-// lsm tree 最大层数. 默认为 7 层.
+// WithMaxLevel lsm tree 最大层数. 默认为 7 层.
 func WithMaxLevel(maxLevel int) ConfigOption {
 	return func(c *Config) {
 		c.MaxLevel = maxLevel
 	}
 }
 
-// level0层每个 sstable 文件的大小，单位 byte. 默认为 1 MB.
+// WithSSTSize level0层每个 sstable 文件的大小，单位 byte. 默认为 1 MB.
 // 且每加深一层，sstable 文件大小限制阈值放大 10 倍.
 func WithSSTSize(sstSize uint64) ConfigOption {
 	return func(c *Config) {
@@ -89,28 +89,28 @@ func WithSSTSize(sstSize uint64) ConfigOption {
 	}
 }
 
-// sstable 中每个 block 块的大小限制. 默认为 16KB.
+// WithSSTDataBlockSize sstable 中每个 block 块的大小限制. 默认为 16KB.
 func WithSSTDataBlockSize(sstDataBlockSize int) ConfigOption {
 	return func(c *Config) {
 		c.SSTDataBlockSize = sstDataBlockSize
 	}
 }
 
-// 每个 level 层预期最多存放的 sstable 文件个数. 默认为 10 个.
+// WithSSTNumPerLevel 每个 level 层预期最多存放的 sstable 文件个数. 默认为 10 个.
 func WithSSTNumPerLevel(sstNumPerLevel int) ConfigOption {
 	return func(c *Config) {
 		c.SSTNumPerLevel = sstNumPerLevel
 	}
 }
 
-// 注入过滤器的具体实现. 默认使用本项目下实现的布隆过滤器 bloom filter.
+// WithFilter 注入过滤器的具体实现. 默认使用本项目下实现的布隆过滤器 bloom filter.
 func WithFilter(filter filter.Filter) ConfigOption {
 	return func(c *Config) {
 		c.Filter = filter
 	}
 }
 
-// 注入有序表构造器. 默认使用本项目下实现的跳表 skiplist.
+// WithMemtableConstructor 注入有序表构造器. 默认使用本项目下实现的跳表 skiplist.
 func WithMemtableConstructor(memtableConstructor memtable.MemTableConstructor) ConfigOption {
 	return func(c *Config) {
 		c.MemTableConstructor = memtableConstructor

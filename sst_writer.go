@@ -9,14 +9,14 @@ import (
 	"github.com/cccccxxy/lsmart/util"
 )
 
-// sstable 中用于快速检索 block 的索引
+// Index sstable 中用于快速检索 block 的索引
 type Index struct {
 	Key             []byte // 索引的 key. 保证其 >= 前一个 block 最大 key； < 后一个 block 的最小 key
 	PrevBlockOffset uint64 // 索引前一个 block 起始位置在 sstable 中对应的 offset
 	PrevBlockSize   uint64 // 索引前一个 block 的大小，单位 byte
 }
 
-// 对应于 lsm tree 中的一个 sstable. 这是写入流程的视角
+// SSTWriter 对应于 lsm tree 中的一个 sstable. 这是写入流程的视角
 type SSTWriter struct {
 	conf          *Config           // 配置文件
 	dest          *os.File          // sstable 对应的磁盘文件
@@ -36,7 +36,7 @@ type SSTWriter struct {
 	prevBlockSize   uint64 // 前一个数据块的大小
 }
 
-// sstWriter 构造器
+// NewSSTWriter sstWriter 构造器
 func NewSSTWriter(file string, conf *Config) (*SSTWriter, error) {
 	dest, err := os.OpenFile(path.Join(conf.Dir, file), os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
@@ -57,7 +57,7 @@ func NewSSTWriter(file string, conf *Config) (*SSTWriter, error) {
 	}, nil
 }
 
-// 完成 sstable 的全部处理流程，包括将其中的数据溢写到磁盘，并返回信息供上层的 lsm 获取缓存
+// Finish 完成 sstable 的全部处理流程，包括将其中的数据溢写到磁盘，并返回信息供上层的 lsm 获取缓存
 func (s *SSTWriter) Finish() (size uint64, blockToFilter map[uint64][]byte, index []*Index) {
 	// 完成最后一个块的处理
 	s.refreshBlock()
@@ -92,7 +92,7 @@ func (s *SSTWriter) Finish() (size uint64, blockToFilter map[uint64][]byte, inde
 	return
 }
 
-// 追加一笔数据到 sstable 中
+// Append 追加一笔数据到 sstable 中
 func (s *SSTWriter) Append(key, value []byte) {
 	// 倘若开启一个新的数据块，需要添加索引
 	if s.dataBlock.entriesCnt == 0 {

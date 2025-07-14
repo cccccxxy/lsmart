@@ -49,7 +49,7 @@ type Tree struct {
 	levelToSeq []atomic.Int32
 }
 
-// 构建出一棵 lsm tree
+// NewTree 构建出一棵 lsm tree
 func NewTree(conf *Config) (*Tree, error) {
 	// 1 构造 lsm tree 实例
 	t := Tree{
@@ -88,7 +88,7 @@ func (t *Tree) Close() {
 	}
 }
 
-// 写入一组 kv 对到 lsm tree. 会直接写入到读写 memtable 中.
+// Put 写入一组 kv 对到 lsm tree. 会直接写入到读写 memtable 中.
 func (t *Tree) Put(key, value []byte) error {
 	// 1 加写锁
 	t.dataLock.Lock()
@@ -113,7 +113,7 @@ func (t *Tree) Put(key, value []byte) error {
 	return nil
 }
 
-// 根据 key 读取数据
+// Get 根据 key 读取数据
 func (t *Tree) Get(key []byte) ([]byte, bool, error) {
 	t.dataLock.RLock()
 	// 1 首先读 active memtable.
