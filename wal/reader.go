@@ -8,17 +8,17 @@ import (
 	"io"
 	"os"
 
-	"github.com/xiaoxuxiansheng/golsm/memtable"
+	"github.com/cccccxxy/lsmart/memtable"
 )
 
-// wal 文件读取器
+// WALReader wal 文件读取器
 type WALReader struct {
 	file   string        // 预写日志文件名，是包含了目录在内的绝对路径
 	src    *os.File      // 预写日志文件
 	reader *bufio.Reader // 基于 bufio reader 对日志文件的封装
 }
 
-// 构造器函数.
+// NewWALReader 构造器函数.
 func NewWALReader(file string) (*WALReader, error) {
 	// 以只读模式打开 wal 文件，要求目标文件必须存在
 	src, err := os.OpenFile(file, os.O_RDONLY, 0644)
@@ -33,7 +33,7 @@ func NewWALReader(file string) (*WALReader, error) {
 	}, nil
 }
 
-// 读取 wal 文件，将所有内容注入到 memtable 中，以实现内存数据的复原
+// RestoreToMemtable 读取 wal 文件，将所有内容注入到 memtable 中，以实现内存数据的复原
 func (w *WALReader) RestoreToMemtable(memTable memtable.MemTable) error {
 	// 读取 wal 文件全量内容
 	body, err := io.ReadAll(w.reader)

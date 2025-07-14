@@ -10,7 +10,7 @@ func SharedPrefixLen(a, b []byte) int {
 	return i
 }
 
-// 返回结果 x，保证 a <= x < b. 使用方需要自行保证 a < b
+// GetSeparatorBetween 返回结果 x，保证 a <= x < b. 使用方需要自行保证 a < b
 func GetSeparatorBetween(a, b []byte) []byte {
 	// 倘若 a 为空，则返回一个比 b 小的结果即可
 	if len(a) == 0 {

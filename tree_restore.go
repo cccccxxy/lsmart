@@ -1,4 +1,4 @@
-package golsm
+package lsmart
 
 import (
 	"io/fs"
@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xiaoxuxiansheng/golsm/wal"
+	"github.com/cccccxxy/lsmart/wal"
 )
 
 // 读取 sst 文件，还原出整棵树

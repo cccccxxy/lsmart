@@ -5,14 +5,14 @@ import (
 	"os"
 )
 
-// 预写日志写入口
+// WALWriter 预写日志写入口
 type WALWriter struct {
 	file         string   // 预写日志文件名，是包含了目录在内的绝对路径
 	dest         *os.File // 预写日志文件
 	assistBuffer [30]byte // 辅助转移数据使用的临时缓冲区
 }
 
-// 构造器
+// NewWALWriter 构造器
 func NewWALWriter(file string) (*WALWriter, error) {
 	// 打开 wal 文件，如果文件不存在则进行创建
 	dest, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY, 0644)

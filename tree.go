@@ -1,15 +1,15 @@
-package golsm
+package lsmart
 
 import (
 	"bytes"
 	"sync"
 	"sync/atomic"
 
-	"github.com/xiaoxuxiansheng/golsm/memtable"
-	"github.com/xiaoxuxiansheng/golsm/wal"
+	"github.com/cccccxxy/lsmart/memtable"
+	"github.com/cccccxxy/lsmart/wal"
 )
 
-// 1 构造一棵树，基于 config 与磁盘文件映射
+// Tree 1 构造一棵树，基于 config 与磁盘文件映射
 // 2 写入一笔数据
 // 3 查询一笔数据
 type Tree struct {

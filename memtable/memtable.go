@@ -1,9 +1,9 @@
 package memtable
 
-// memtable 构造器
+// MemTableConstructor memtable 构造器
 type MemTableConstructor func() MemTable
 
-// 有序表 interface
+// MemTable 有序表 interface
 type MemTable interface {
 	Put(key, value []byte)         // 写入数据
 	Get(key []byte) ([]byte, bool) // 读取数据，第二个 bool flag 标识数据是否存在

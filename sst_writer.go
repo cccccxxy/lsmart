@@ -1,4 +1,4 @@
-package golsm
+package lsmart
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 	"os"
 	"path"
 
-	"github.com/xiaoxuxiansheng/golsm/util"
+	"github.com/cccccxxy/lsmart/util"
 )
 
 // sstable 中用于快速检索 block 的索引

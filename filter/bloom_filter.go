@@ -6,13 +6,13 @@ import (
 	"github.com/spaolacci/murmur3"
 )
 
-// 布隆过滤器
+// BloomFilter 布隆过滤器
 type BloomFilter struct {
 	m          int      // bitmap 的长度，单位 bit
 	hashedKeys []uint32 // 添加到布隆过滤器的一系列 key 的 hash 值
 }
 
-// 布隆过滤器构造器
+// NewBloomFilter 布隆过滤器构造器
 func NewBloomFilter(m int) (*BloomFilter, error) {
 	if m <= 0 {
 		return nil, errors.New("m must be postive")
@@ -22,12 +22,12 @@ func NewBloomFilter(m int) (*BloomFilter, error) {
 	}, nil
 }
 
-// 添加一个 key 到布隆过滤器
+// Add 添加一个 key 到布隆过滤器
 func (bf *BloomFilter) Add(key []byte) {
 	bf.hashedKeys = append(bf.hashedKeys, murmur3.Sum32(key))
 }
 
-// 判断过滤器中是否存在 key（注意，可能存在假阳性误判问题）
+// Exist 判断过滤器中是否存在 key（注意，可能存在假阳性误判问题）
 func (bf *BloomFilter) Exist(bitmap, key []byte) bool {
 	// 生成 bitmap 时，需要把哈希函数个数 k 的值设置在 bitmap 的最后一个 byte 上
 	if bitmap == nil {
@@ -58,7 +58,7 @@ func (bf *BloomFilter) Exist(bitmap, key []byte) bool {
 	return true
 }
 
-// 生成过滤器对应的 bitmap. 最后一个 byte 标识 k 的数值
+// Hash 生成过滤器对应的 bitmap. 最后一个 byte 标识 k 的数值
 func (bf *BloomFilter) Hash() []byte {
 	// k: 根据 m 和 n 推导出最佳 hash 函数个数
 	k := bf.bestK()
@@ -84,12 +84,12 @@ func (bf *BloomFilter) Hash() []byte {
 	return bitmap
 }
 
-// 重置过滤器
+// Reset 重置过滤器
 func (bf *BloomFilter) Reset() {
 	bf.hashedKeys = bf.hashedKeys[:0]
 }
 
-// 获取过滤器中存在的 key 个数
+// KeyLen 获取过滤器中存在的 key 个数
 func (bf *BloomFilter) KeyLen() int {
 	return len(bf.hashedKeys)
 }

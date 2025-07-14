@@ -1,14 +1,14 @@
-package golsm
+package lsmart
 
 import (
 	"bytes"
 	"encoding/binary"
 	"io"
 
-	"github.com/xiaoxuxiansheng/golsm/util"
+	"github.com/cccccxxy/lsmart/util"
 )
 
-// sst 文件中的数据块，和索引、过滤器为一一对应关系
+// Block sst 文件中的数据块，和索引、过滤器为一一对应关系
 type Block struct {
 	conf       *Config       // lsm tree 配置文件
 	buffer     [30]byte      // 用于辅助转移数据的临时缓冲区
@@ -17,7 +17,7 @@ type Block struct {
 	prevKey    []byte        // 最晚一笔写入的数据的 key
 }
 
-// 数据块构造器
+// NewBlock 数据块构造器
 func NewBlock(conf *Config) *Block {
 	return &Block{
 		conf:   conf,
@@ -25,7 +25,7 @@ func NewBlock(conf *Config) *Block {
 	}
 }
 
-// 追加一组kv对到数据块中
+// Append 追加一组kv对到数据块中
 func (b *Block) Append(key, value []byte) {
 	// 兜底执行：设置 prevKey 为当前写入的 key；累加 entriesCnt 数量
 	defer func() {
@@ -48,19 +48,19 @@ func (b *Block) Append(key, value []byte) {
 	b.record.Write(value)
 }
 
-// 获取数据块的大小，单位 byte
+// Size 获取数据块的大小，单位 byte
 func (b *Block) Size() int {
 	return b.record.Len()
 }
 
-// 把块中的数据溢写到 dest writer 中
+// FlushTo 把块中的数据溢写到 dest writer 中
 func (b *Block) FlushTo(dest io.Writer) (uint64, error) {
 	defer b.clear()
 	n, err := dest.Write(b.ToBytes())
 	return uint64(n), err
 }
 
-// 将数据块中的数据转为 byte 数组
+// ToBytes 将数据块中的数据转为 byte 数组
 func (b *Block) ToBytes() []byte {
 	return b.record.Bytes()
 }

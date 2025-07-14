@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// 跳表，未加锁，不保证并发安全
+// Skiplist 跳表，未加锁，不保证并发安全
 type Skiplist struct {
 	head      *skipNode // 跳表的头结点
 	entrisCnt int       // 跳表中的 kv 对个数
@@ -19,14 +19,14 @@ type skipNode struct {
 	key, value []byte      // 节点内存储的 kv 对数据
 }
 
-// 构造跳表实例
+// NewSkiplist 构造跳表实例
 func NewSkiplist() MemTable {
 	return &Skiplist{
 		head: &skipNode{}, // 需要初始化根节点
 	}
 }
 
-// 写入一笔 kv 对到跳表. 如果 key 不存在，则为插入操作；如果 key 已存在则为覆盖操作
+// Put 写入一笔 kv 对到跳表. 如果 key 不存在，则为插入操作；如果 key 已存在则为覆盖操作
 func (s *Skiplist) Put(key, value []byte) {
 	// 倘若 key 已存在
 	if node := s.getNode(key); node != nil {
@@ -70,7 +70,7 @@ func (s *Skiplist) Put(key, value []byte) {
 	}
 }
 
-// 从跳表中读取 kv 对
+// Get 从跳表中读取 kv 对
 func (s *Skiplist) Get(key []byte) ([]byte, bool) {
 	// 倘若 key 存在，返回对应 val
 	if node := s.getNode(key); node != nil {
@@ -80,7 +80,7 @@ func (s *Skiplist) Get(key []byte) ([]byte, bool) {
 	return nil, false
 }
 
-// 获取跳表中全量 kv 对数据
+// All 获取跳表中全量 kv 对数据
 func (s *Skiplist) All() []*KV {
 	if len(s.head.nexts) == 0 {
 		return nil
@@ -98,12 +98,12 @@ func (s *Skiplist) All() []*KV {
 	return kvs
 }
 
-// 跳表数据量大小，单位 byte
+// Size 跳表数据量大小，单位 byte
 func (s *Skiplist) Size() int {
 	return s.size
 }
 
-// 跳表 kv 对数量
+// EntriesCnt 跳表 kv 对数量
 func (s *Skiplist) EntriesCnt() int {
 	return s.entrisCnt
 }

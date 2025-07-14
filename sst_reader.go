@@ -1,4 +1,4 @@
-package golsm
+package lsmart
 
 import (
 	"bufio"

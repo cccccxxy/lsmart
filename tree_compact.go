@@ -1,4 +1,4 @@
-package golsm
+package lsmart
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/xiaoxuxiansheng/golsm/memtable"
+	"github.com/cccccxxy/lsmart/memtable"
 )
 
 type memTableCompactItem struct {

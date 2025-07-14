@@ -1,4 +1,4 @@
-package golsm
+package lsmart
 
 import (
 	"io/fs"
@@ -6,8 +6,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/xiaoxuxiansheng/golsm/filter"
-	"github.com/xiaoxuxiansheng/golsm/memtable"
+	"github.com/cccccxxy/lsmart/filter"
+	"github.com/cccccxxy/lsmart/memtable"
 )
 
 // lsm tree 配置项聚合
