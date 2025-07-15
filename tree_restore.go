@@ -1,5 +1,4 @@
 package lsmart
-
 import (
 	"io/fs"
 	"os"
@@ -11,7 +10,7 @@ import (
 	"github.com/cccccxxy/lsmart/wal"
 )
 
-// 读取 sst 文件，还原出整棵树
+// 读取 sst 文件，还原出整棵树的分组结构
 func (t *Tree) constructTree() error {
 	// 读取 sst 文件目录下的 sst 文件列表
 	sstEntries, err := t.getSortedSSTEntries()
@@ -19,12 +18,48 @@ func (t *Tree) constructTree() error {
 		return err
 	}
 
-	// 遍历每个 sst 文件，将其加载为 node 添加 lsm tree 的 nodes 内存切片中
+	// 按分组组织SST文件
+	groupFiles := make(map[int][]fs.DirEntry)
+	maxGroupID := 0
+	maxSSTSeq := int32(0)
+	// 遍历每个 sst 文件，按分组分类
 	for _, sstEntry := range sstEntries {
-		if err = t.loadNode(sstEntry); err != nil {
-			return err
+		groupID, seq := getGroupSeqFromSSTFile(sstEntry.Name())
+		
+		if groupID > maxGroupID {
+			maxGroupID = groupID
 		}
+		if seq > maxSSTSeq {
+			maxSSTSeq = seq
+		}
+		
+		groupFiles[groupID] = append(groupFiles[groupID], sstEntry)
 	}
+
+	// 设置序列号生成器
+	t.groupSeq.Store(int32(maxGroupID))
+	t.sstSeq.Store(maxSSTSeq)
+
+	// 为每个分组创建Group并加载SST文件
+	for groupID, files := range groupFiles {
+		group := NewGroup(groupID, t.conf)
+		
+		// 加载分组内的所有SST文件
+		for _, sstEntry := range files {
+			node, err := t.loadNode(sstEntry, groupID)
+			if err != nil {
+				return err
+			}
+			group.AddNode(node)
+		}
+		
+		t.groups = append(t.groups, group)
+	}
+
+	// 按分组ID排序
+	sort.Slice(t.groups, func(i, j int) bool {
+		return t.groups[i].ID() < t.groups[j].ID()
+	})
 
 	return nil
 }
@@ -47,63 +82,70 @@ func (t *Tree) getSortedSSTEntries() ([]fs.DirEntry, error) {
 
 		sstEntries = append(sstEntries, entry)
 	}
-
+	// 按分组ID和序列号排序
 	sort.Slice(sstEntries, func(i, j int) bool {
-		levelI, seqI := getLevelSeqFromSSTFile(sstEntries[i].Name())
-		levelJ, seqJ := getLevelSeqFromSSTFile(sstEntries[j].Name())
-		if levelI == levelJ {
+		groupI, seqI := getGroupSeqFromSSTFile(sstEntries[i].Name())
+		groupJ, seqJ := getGroupSeqFromSSTFile(sstEntries[j].Name())
+		if groupI == groupJ {
 			return seqI < seqJ
 		}
-		return levelI < levelJ
+		return groupI < groupJ
 	})
 	return sstEntries, nil
 }
 
-// 将一个 sst 文件作为一个 node 加载进入 lsm tree 的拓扑结构中
-func (t *Tree) loadNode(sstEntry fs.DirEntry) error {
+// 将一个 sst 文件作为一个 node 加载
+func (t *Tree) loadNode(sstEntry fs.DirEntry, groupID int) (*Node, error) {
 	// 创建 sst 文件对应的 reader
 	sstReader, err := NewSSTReader(sstEntry.Name(), t.conf)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// 读取各 block 块对应的 filter 信息
 	blockToFilter, err := sstReader.ReadFilter()
 	if err != nil {
-		return err
+		sstReader.Close()
+		return nil, err
 	}
 
 	// 读取 index 信息
 	index, err := sstReader.ReadIndex()
 	if err != nil {
-		return err
+		sstReader.Close()
+		return nil, err
 	}
 
 	// 获取 sst 文件的大小，单位 byte
 	size, err := sstReader.Size()
 	if err != nil {
-		return err
+		sstReader.Close()
+		return nil, err
 	}
-
-	// 解析 sst 文件名，得知 sst 文件对应的 level 以及 seq 号
-	level, seq := getLevelSeqFromSSTFile(sstEntry.Name())
-	// 将 sst 文件作为一个 node 插入到 lsm tree 中
-	t.insertNodeWithReader(sstReader, level, seq, size, blockToFilter, index)
-	return nil
+	// 解析 sst 文件名，得知 sst 文件对应的分组ID以及 seq 号
+	_, seq := getGroupSeqFromSSTFile(sstEntry.Name())
+	
+	// 创建节点
+	node := NewNode(t.conf, sstEntry.Name(), sstReader, groupID, seq, size, blockToFilter, index)
+	return node, nil
 }
 
-func getLevelSeqFromSSTFile(file string) (level int, seq int32) {
+func getGroupSeqFromSSTFile(file string) (groupID int, seq int32) {
 	file = strings.Replace(file, ".sst", "", -1)
 	splitted := strings.Split(file, "_")
-	level, _ = strconv.Atoi(splitted[0])
+	groupID, _ = strconv.Atoi(splitted[0])
 	_seq, _ := strconv.Atoi(splitted[1])
-	return level, int32(_seq)
+	return groupID, int32(_seq)
 }
-
 // 读取 wal 还原出 memtable
 func (t *Tree) constructMemtable() error {
 	// 1 读 wal 目录，获取所有的 wal 文件
-	raw, _ := os.ReadDir(path.Join(t.conf.Dir, "walfile"))
+	raw, err := os.ReadDir(path.Join(t.conf.Dir, "walfile"))
+	if err != nil {
+		// 如果wal目录不存在，创建新的memtable
+		t.newMemTable()
+		return nil
+	}
 
 	// 2 wal 文件除杂
 	var wals []fs.DirEntry
@@ -151,25 +193,25 @@ func (t *Tree) restoreMemTable(wals []fs.DirEntry) error {
 			return err
 		}
 		defer walReader.Close()
-
 		// 通过 reader 读取 wal 文件内容，将数据注入到 memtable 中
 		memtable := t.conf.MemTableConstructor()
 		if err = walReader.RestoreToMemtable(memtable); err != nil {
 			return err
 		}
-
 		if i == len(wals)-1 { // 倘若是最后一个 wal 文件，则 memtable 作为读写 memtable
 			t.memTable = memtable
 			t.memTableIndex = walFileToMemTableIndex(name)
 			t.walWriter, _ = wal.NewWALWriter(file)
 		} else { // memtable 作为只读 memtable，需要追加到只读 slice 以及 channel 中，继续推进完成溢写落盘流程
-			memTableCompactItem := memTableCompactItem{
+			item := &memTableCompactItem{
 				walFile:  file,
 				memTable: memtable,
 			}
 
-			t.rOnlyMemTable = append(t.rOnlyMemTable, &memTableCompactItem)
-			t.memCompactC <- &memTableCompactItem
+			t.rOnlyMemTable = append(t.rOnlyMemTable, item)
+			go func(compactItem *memTableCompactItem) {
+				t.memCompactC <- compactItem
+			}(item)
 		}
 	}
 	return nil

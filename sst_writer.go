@@ -31,9 +31,10 @@ type SSTWriter struct {
 	indexBlock    *Block   // 索引块
 	assistScratch [20]byte // 用于在写索引块时临时使用的辅助缓冲区
 
-	prevKey         []byte // 前一笔数据的 key
-	prevBlockOffset uint64 // 前一个数据块的起始偏移位置
-	prevBlockSize   uint64 // 前一个数据块的大小
+	prevKey          []byte // 前一笔数据的 key
+	prevBlockOffset  uint64 // 前一个数据块的起始偏移位置
+	prevBlockSize    uint64 // 前一个数据块的大小
+	currentBlockSize uint64 // 当前数据块的大小
 }
 
 // NewSSTWriter sstWriter 构造器

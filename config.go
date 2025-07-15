@@ -13,13 +13,15 @@ import (
 // Config lsm tree 配置项聚合
 type Config struct {
 	Dir      string // sst 文件存放的目录
-	MaxLevel int    // lsm tree 总共多少层
+	// 单层分组相关配置（替代原来的多层结构）
+	GroupSize        int    // 每个分组最大的 sstable 文件个数，默认 10 个
+	GroupSSTSize     uint64 // 每个分组中每个 sstable 文件的大小，默认 10MB（比原来更大）
+	MaxGroups        int    // 最大分组数量，默认 100 个分组
+	CompactionRatio  float64 // 压缩触发比例，当分组达到该比例时触发压缩，默认 0.8
 
 	// sst 相关
-	SSTSize          uint64 // 每个 sst table 大小，默认 4M
-	SSTNumPerLevel   int    // 每层多少个 sstable，默认 10 个
-	SSTDataBlockSize int    // sst table 中 block 大小 默认 16KB
-	SSTFooterSize    int    // sst table 中 footer 部分大小. 固定为 32B
+	SSTDataBlockSize int // sst table 中 block 大小 默认 16KB
+	SSTFooterSize    int // sst table 中 footer 部分大小. 固定为 32B
 
 	Filter              filter.Filter                // 过滤器. 默认使用布隆过滤器
 	MemTableConstructor memtable.MemTableConstructor // memtable 构造器，默认为跳表
@@ -74,18 +76,31 @@ func (c *Config) check() error {
 // ConfigOption 配置项
 type ConfigOption func(*Config)
 
-// WithMaxLevel lsm tree 最大层数. 默认为 7 层.
-func WithMaxLevel(maxLevel int) ConfigOption {
+// WithGroupSize 每个分组最大的 sstable 文件个数. 默认为 10 个.
+func WithGroupSize(groupSize int) ConfigOption {
 	return func(c *Config) {
-		c.MaxLevel = maxLevel
+		c.GroupSize = groupSize
 	}
 }
 
-// WithSSTSize level0层每个 sstable 文件的大小，单位 byte. 默认为 1 MB.
-// 且每加深一层，sstable 文件大小限制阈值放大 10 倍.
-func WithSSTSize(sstSize uint64) ConfigOption {
+// WithGroupSSTSize 每个分组中每个 sstable 文件的大小，单位 byte. 默认为 10 MB.
+func WithGroupSSTSize(groupSSTSize uint64) ConfigOption {
 	return func(c *Config) {
-		c.SSTSize = sstSize
+		c.GroupSSTSize = groupSSTSize
+	}
+}
+
+// WithMaxGroups 最大分组数量. 默认为 100 个分组.
+func WithMaxGroups(maxGroups int) ConfigOption {
+	return func(c *Config) {
+		c.MaxGroups = maxGroups
+	}
+}
+
+// WithCompactionRatio 压缩触发比例. 默认为 0.8.
+func WithCompactionRatio(ratio float64) ConfigOption {
+	return func(c *Config) {
+		c.CompactionRatio = ratio
 	}
 }
 
@@ -93,13 +108,6 @@ func WithSSTSize(sstSize uint64) ConfigOption {
 func WithSSTDataBlockSize(sstDataBlockSize int) ConfigOption {
 	return func(c *Config) {
 		c.SSTDataBlockSize = sstDataBlockSize
-	}
-}
-
-// WithSSTNumPerLevel 每个 level 层预期最多存放的 sstable 文件个数. 默认为 10 个.
-func WithSSTNumPerLevel(sstNumPerLevel int) ConfigOption {
-	return func(c *Config) {
-		c.SSTNumPerLevel = sstNumPerLevel
 	}
 }
 
@@ -118,27 +126,30 @@ func WithMemtableConstructor(memtableConstructor memtable.MemTableConstructor) C
 }
 
 func repaire(c *Config) {
-	// lsm tree 默认为 7 层.
-	if c.MaxLevel <= 1 {
-		c.MaxLevel = 7
+	// 每个分组默认为 10 个 sstable 文件.
+	if c.GroupSize <= 0 {
+		c.GroupSize = 10
 	}
 
-	// level0 层每个 sstable 文件默认大小限制为 1MB.
-	// 且每加深一层，sstable 文件大小限制阈值放大 10 倍.
-	if c.SSTSize <= 0 {
-		c.SSTSize = 1024 * 1024
+	// 每个分组中每个 sstable 文件默认大小限制为 10MB.
+	if c.GroupSSTSize <= 0 {
+		c.GroupSSTSize = 10 * 1024 * 1024 // 10MB
+	}
+
+	// 默认最大 100 个分组.
+	if c.MaxGroups <= 0 {
+		c.MaxGroups = 100
+	}
+
+	// 默认压缩触发比例为 0.8.
+	if c.CompactionRatio <= 0 || c.CompactionRatio >= 1 {
+		c.CompactionRatio = 0.8
 	}
 
 	// sstable 中每个 block 块的大小限制. 默认为 16KB.
 	if c.SSTDataBlockSize <= 0 {
 		c.SSTDataBlockSize = 16 * 1024 // 16KB
 	}
-
-	// 每个 level 层预期最多存放的 sstable 文件个数. 默认为 10 个.
-	if c.SSTNumPerLevel <= 0 {
-		c.SSTNumPerLevel = 10
-	}
-
 	// 注入过滤器的具体实现. 默认使用本项目下实现的布隆过滤器 bloom filter.
 	if c.Filter == nil {
 		c.Filter, _ = filter.NewBloomFilter(1024)

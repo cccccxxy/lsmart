@@ -9,7 +9,14 @@ import (
 	"github.com/cccccxxy/lsmart/wal"
 )
 
-// Tree 1 构造一棵树，基于 config 与磁盘文件映射
+// memTableCompactItem 内存表压缩项
+type memTableCompactItem struct {
+	walFile  string
+	memTable memtable.MemTable
+}
+
+// Tree 单层分组LSM-tree结构
+// 1 构造一棵树，基于 config 与磁盘文件映射
 // 2 写入一笔数据
 // 3 查询一笔数据
 type Tree struct {
@@ -18,8 +25,8 @@ type Tree struct {
 	// 读写数据时使用的锁
 	dataLock sync.RWMutex
 
-	// 每层 node 节点使用的读写锁
-	levelLocks []sync.RWMutex
+	// 分组读写锁
+	groupLock sync.RWMutex
 
 	// 读写 memtable
 	memTable memtable.MemTable
@@ -30,14 +37,14 @@ type Tree struct {
 	// 预写日志写入口
 	walWriter *wal.WALWriter
 
-	// lsm树状数据结构
-	nodes [][]*Node
+	// 单层分组结构（替代原来的多层nodes）
+	groups []*Group
 
 	// memtable 达到阈值时，通过该 chan 传递信号，进行溢写工作
 	memCompactC chan *memTableCompactItem
 
-	// 某层 sst 文件大小达到阈值时，通过该 chan 传递信号，进行溢写工作
-	levelCompactC chan int
+	// 分组压缩信号通道
+	groupCompactC chan int
 
 	// lsm tree 停止时通过该 chan 传递信号
 	stopc chan struct{}
@@ -45,8 +52,11 @@ type Tree struct {
 	// memtable index，需要与 wal 文件一一对应
 	memTableIndex int
 
-	// 各层 sstable 文件 seq. sstable 文件命名为 level_seq.sst
-	levelToSeq []atomic.Int32
+	// 分组seq生成器
+	groupSeq atomic.Int32
+
+	// SST文件seq生成器
+	sstSeq atomic.Int32
 }
 
 // NewTree 构建出一棵 lsm tree
@@ -55,11 +65,9 @@ func NewTree(conf *Config) (*Tree, error) {
 	t := Tree{
 		conf:          conf,
 		memCompactC:   make(chan *memTableCompactItem),
-		levelCompactC: make(chan int),
+		groupCompactC: make(chan int),
 		stopc:         make(chan struct{}),
-		levelToSeq:    make([]atomic.Int32, conf.MaxLevel),
-		nodes:         make([][]*Node, conf.MaxLevel),
-		levelLocks:    make([]sync.RWMutex, conf.MaxLevel),
+		groups:        make([]*Group, 0, conf.MaxGroups),
 	}
 
 	// 2 读取 sst 文件，还原出整棵树
@@ -81,10 +89,11 @@ func NewTree(conf *Config) (*Tree, error) {
 
 func (t *Tree) Close() {
 	close(t.stopc)
-	for i := 0; i < len(t.nodes); i++ {
-		for j := 0; j < len(t.nodes[i]); j++ {
-			t.nodes[i][j].Close()
-		}
+	t.groupLock.Lock()
+	defer t.groupLock.Unlock()
+
+	for _, group := range t.groups {
+		group.Close()
 	}
 }
 
@@ -93,7 +102,6 @@ func (t *Tree) Put(key, value []byte) error {
 	// 1 加写锁
 	t.dataLock.Lock()
 	defer t.dataLock.Unlock()
-
 	// 2 数据预写入预写日志中，防止因宕机引起 memtable 数据丢失.
 	if err := t.walWriter.Write(key, value); err != nil {
 		return err
@@ -102,9 +110,9 @@ func (t *Tree) Put(key, value []byte) error {
 	// 3 数据写入读写跳表
 	t.memTable.Put(key, value)
 
-	// 4 倘若读写跳表的大小未达到 level0 层 sstable 的大小阈值，则直接返回.
+	// 4 倘若读写跳表的大小未达到阈值，则直接返回.
 	// 考虑到溢写成 sstable 后，需要有一些辅助的元数据，预估容量放大为 5/4 倍
-	if uint64(t.memTable.Size()*5/4) <= t.conf.SSTSize {
+	if uint64(t.memTable.Size()*5/4) <= t.conf.GroupSSTSize {
 		return nil
 	}
 
@@ -133,48 +141,25 @@ func (t *Tree) Get(key []byte) ([]byte, bool, error) {
 	}
 	t.dataLock.RUnlock()
 
-	// 3 读 sstable level0 层. 按照 index 倒序遍历，因为 index 越大，数据越晚写入，实时性越强
-	var err error
-	t.levelLocks[0].RLock()
-	for i := len(t.nodes[0]) - 1; i >= 0; i-- {
-		if value, ok, err = t.nodes[0][i].Get(key); err != nil {
-			t.levelLocks[0].RUnlock()
+	// 3 读分组中的SST文件，按照分组倒序遍历（新分组优先）
+	t.groupLock.RLock()
+	defer t.groupLock.RUnlock()
+	for i := len(t.groups) - 1; i >= 0; i-- {
+		if value, ok, err := t.groups[i].Get(key); err != nil {
 			return nil, false, err
-		}
-		if ok {
-			t.levelLocks[0].RUnlock()
+		} else if ok {
 			return value, true, nil
 		}
 	}
-	t.levelLocks[0].RUnlock()
 
-	// 4 依次读 sstable level 1 ~ i 层，每层至多只需要和一个 sstable 交互. 因为这些 level 层中的 sstable 都是无重复数据且全局有序的
-	for level := 1; level < len(t.nodes); level++ {
-		t.levelLocks[level].RLock()
-		node, ok := t.levelBinarySearch(level, key, 0, len(t.nodes[level])-1)
-		if !ok {
-			t.levelLocks[level].RUnlock()
-			continue
-		}
-		if value, ok, err = node.Get(key); err != nil {
-			t.levelLocks[level].RUnlock()
-			return nil, false, err
-		}
-		if ok {
-			t.levelLocks[level].RUnlock()
-			return value, true, nil
-		}
-		t.levelLocks[level].RUnlock()
-	}
-
-	// 5 至此都没有读到数据，则返回 key 不存在.
+	// 4 至此都没有读到数据，则返回 key 不存在.
 	return nil, false, nil
 }
 
 // 切换读写跳表为只读跳表，并构建新的读写跳表
 func (t *Tree) refreshMemTableLocked() {
 	// 辞旧
-	// 将读写跳表切换为只读跳表，追加到 slice 中，并通过 chan 发送给 compact 协程，由其负责进行溢写成为 level0 层 sst 文件的操作.
+	// 将读写跳表切换为只读跳表，追加到 slice 中，并通过 chan 发送给 compact 协程，由其负责进行溢写成为SST文件的操作.
 	oldItem := memTableCompactItem{
 		walFile:  t.walFile(),
 		memTable: t.memTable,
@@ -191,24 +176,58 @@ func (t *Tree) refreshMemTableLocked() {
 	t.newMemTable()
 }
 
-func (t *Tree) levelBinarySearch(level int, key []byte, start, end int) (*Node, bool) {
-	if start > end {
-		return nil, false
-	}
-
-	mid := start + (end-start)>>1
-	if bytes.Compare(t.nodes[level][start].endKey, key) < 0 {
-		return t.levelBinarySearch(level, key, mid+1, end)
-	}
-
-	if bytes.Compare(t.nodes[level][start].startKey, key) > 0 {
-		return t.levelBinarySearch(level, key, start, mid-1)
-	}
-
-	return t.nodes[level][mid], true
-}
-
 func (t *Tree) newMemTable() {
 	t.walWriter, _ = wal.NewWALWriter(t.walFile())
 	t.memTable = t.conf.MemTableConstructor()
+}
+
+// findOrCreateGroup 查找或创建适合存放指定key范围的分组
+func (t *Tree) findOrCreateGroup(startKey, endKey []byte) *Group {
+	t.groupLock.Lock()
+	defer t.groupLock.Unlock()
+
+	// 查找是否有重叠的分组
+	for _, group := range t.groups {
+		if group.NodeCount() < t.conf.GroupSize {
+			// 检查key范围是否有重叠或者分组为空
+			if group.StartKey() == nil || group.EndKey() == nil ||
+				!(bytes.Compare(endKey, group.StartKey()) < 0 || bytes.Compare(startKey, group.EndKey()) > 0) {
+				return group
+			}
+		}
+	}
+
+	// 没有找到合适的分组，创建新分组
+	if len(t.groups) < t.conf.MaxGroups {
+		groupID := int(t.groupSeq.Add(1))
+		newGroup := NewGroup(groupID, t.conf)
+		t.groups = append(t.groups, newGroup)
+		return newGroup
+	}
+
+	// 如果已达到最大分组数，返回最后一个分组（可能需要压缩）
+	if len(t.groups) > 0 {
+		return t.groups[len(t.groups)-1]
+	}
+
+	// 创建第一个分组
+	groupID := int(t.groupSeq.Add(1))
+	newGroup := NewGroup(groupID, t.conf)
+	t.groups = append(t.groups, newGroup)
+	return newGroup
+}
+
+// tryTriggerGroupCompact 尝试触发分组压缩
+func (t *Tree) tryTriggerGroupCompact(groupID int) {
+	t.groupLock.RLock()
+	defer t.groupLock.RUnlock()
+
+	for _, group := range t.groups {
+		if group.ID() == groupID && group.ShouldCompact() {
+			go func() {
+				t.groupCompactC <- groupID
+			}()
+			break
+		}
+	}
 }

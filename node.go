@@ -10,8 +10,8 @@ import (
 type Node struct {
 	conf          *Config           // 配置文件
 	file          string            // sstable 对应的文件名，不含目录路径
-	level         int               // sstable 所在 level 层级
-	seq           int32             // sstable 的 seq 序列号. 对应为文件名中的 level_seq.sst 中的 seq
+	groupID       int               // sstable 所在分组ID（替代原来的level）
+	seq           int32             // sstable 的 seq 序列号. 对应为文件名中的 g{groupID}_{seq}.sst 中的 seq
 	size          uint64            // sstable 的大小，单位 byte
 	blockToFilter map[uint64][]byte // 各 block 对应的 filter bitmap
 	index         []*Index          // 各 block 对应的索引
@@ -20,12 +20,12 @@ type Node struct {
 	sstReader     *SSTReader        // 读取 sst 文件的 reader 入口
 }
 
-func NewNode(conf *Config, file string, sstReader *SSTReader, level int, seq int32, size uint64, blockToFilter map[uint64][]byte, index []*Index) *Node {
+func NewNode(conf *Config, file string, sstReader *SSTReader, groupID int, seq int32, size uint64, blockToFilter map[uint64][]byte, index []*Index) *Node {
 	return &Node{
 		conf:          conf,
 		file:          file,
 		sstReader:     sstReader,
-		level:         level,
+		groupID:       groupID,
 		seq:           seq,
 		size:          size,
 		blockToFilter: blockToFilter,
@@ -41,6 +41,11 @@ func (n *Node) GetAll() ([]*KV, error) {
 
 // 查看是否在节点中
 func (n *Node) Get(key []byte) ([]byte, bool, error) {
+	// 检查key是否在节点范围内
+	if bytes.Compare(key, n.startKey) < 0 || bytes.Compare(key, n.endKey) > 0 {
+		return nil, false, nil
+	}
+
 	// 通过索引定位到具体的块
 	index, ok := n.binarySearchIndex(key, 0, len(n.index)-1)
 	if !ok {
@@ -86,9 +91,29 @@ func (n *Node) End() []byte {
 	return n.endKey
 }
 
-func (n *Node) Index() (level int, seq int32) {
-	level, seq = n.level, n.seq
+func (n *Node) Index() (groupID int, seq int32) {
+	groupID, seq = n.groupID, n.seq
 	return
+}
+
+// GroupID 获取节点所属分组ID
+func (n *Node) GroupID() int {
+	return n.groupID
+}
+
+// Seq 获取节点序列号
+func (n *Node) Seq() int32 {
+	return n.seq
+}
+
+// KeyRange 获取节点的key范围
+func (n *Node) KeyRange() ([]byte, []byte) {
+	return n.startKey, n.endKey
+}
+
+// KeyInRange 检查key是否在节点范围内
+func (n *Node) KeyInRange(key []byte) bool {
+	return bytes.Compare(key, n.startKey) >= 0 && bytes.Compare(key, n.endKey) <= 0
 }
 
 func (n *Node) Destroy() {
@@ -105,7 +130,6 @@ func (n *Node) binarySearchIndex(key []byte, start, end int) (*Index, bool) {
 	if start == end {
 		return n.index[start], bytes.Compare(n.index[start].Key, key) >= 0
 	}
-
 	// 目标块，保证 key <= index[i].key && key > index[i-1].key
 	mid := start + (end-start)>>1
 	if bytes.Compare(n.index[mid].Key, key) < 0 {
