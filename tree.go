@@ -2,6 +2,8 @@ package lsmart
 
 import (
 	"bytes"
+	"fmt"
+	"path"
 	"sync"
 	"sync/atomic"
 
@@ -44,7 +46,6 @@ type Tree struct {
 
 	// memtable index，需要与 wal 文件一一对应
 	memTableIndex int
-
 	// 各层 sstable 文件 seq. sstable 文件命名为 level_seq.sst
 	levelToSeq []atomic.Int32
 }
@@ -174,23 +175,99 @@ func (t *Tree) Get(key []byte) ([]byte, bool, error) {
 // 切换读写跳表为只读跳表，并构建新的读写跳表
 func (t *Tree) refreshMemTableLocked() {
 	// 辞旧
-	// 将读写跳表切换为只读跳表，追加到 slice 中，并通过 chan 发送给 compact 协程，由其负责进行溢写成为 level0 层 sst 文件的操作.
-	oldItem := memTableCompactItem{
-		walFile:  t.walFile(),
-		memTable: t.memTable,
+	// 将读写跳表根据前缀分割为多个只读跳表，分别进行溢写操作
+
+	// 创建一个 map 来存储不同前缀的 memTable
+	prefixMemTables := make(map[string]memtable.MemTable)
+
+	// 遍历当前 memTable，根据 key 的前缀将其分到不同的 memTable 中
+	allKVs := t.memTable.All()
+	for _, kv := range allKVs {
+		// 提取前缀：使用 ':' 或 '_' 作为分隔符
+		prefix := extractPrefix(kv.Key)
+
+		// 如果该前缀的 memTable 不存在，则创建一个
+		if _, ok := prefixMemTables[prefix]; !ok {
+			prefixMemTables[prefix] = t.conf.MemTableConstructor()
+		}
+
+		// 将 kv 对插入到对应前缀的 memTable 中
+		prefixMemTables[prefix].Put(kv.Key, kv.Value)
 	}
-	t.rOnlyMemTable = append(t.rOnlyMemTable, &oldItem)
+
+	// 将每个前缀对应的 memTable 转换为 memTableCompactItem 并发送给 compact 协程
+	for prefix, memTable := range prefixMemTables {
+		// 为每个前缀创建独立的 WAL 文件
+		walFile := t.walFileWithPrefix(prefix)
+
+		oldItem := memTableCompactItem{
+			walFile:  walFile,
+			memTable: memTable,
+		}
+
+		t.rOnlyMemTable = append(t.rOnlyMemTable, &oldItem)
+
+		// 异步发送到压缩队列
+		go func(item *memTableCompactItem) {
+			t.memCompactC <- item
+		}(&oldItem)
+	}
+
+	// 关闭当前的 WAL writer
 	t.walWriter.Close()
-	go func() {
-		t.memCompactC <- &oldItem
-	}()
 
 	// 迎新
-	// 构造一个新的读写 memtable，并构造与之相应的 wal 文件.
+	// 构造一个新的读写 memtable，并构造与之相应的 wal 文件
 	t.memTableIndex++
 	t.newMemTable()
 }
 
+// // 切换读写跳表为只读跳表，并构建新的读写跳表
+// func (t *Tree) refreshMemTableLocked() {
+// 	// 辞旧
+// 	// 将读写跳表切换为只读跳表，追加到 slice 中，并通过 chan 发送给 compact 协程，由其负责进行溢写成为 level0 层 sst 文件的操作.
+// 	oldItem := memTableCompactItem{
+// 		walFile:  t.walFile(),
+// 		memTable: t.memTable,
+// 	}
+// 	t.rOnlyMemTable = append(t.rOnlyMemTable, &oldItem)
+// 	t.walWriter.Close()
+// 	go func() {
+// 		t.memCompactC <- &oldItem
+// 	}()
+
+// 	// 迎新
+// 	// 构造一个新的读写 memtable，并构造与之相应的 wal 文件.
+// 	t.memTableIndex++
+// 	t.newMemTable()
+// }
+
+// extractPrefix 从 key 中提取前缀
+func extractPrefix(key []byte) string {
+	// 尝试用 ':' 分割
+	if parts := bytes.SplitN(key, []byte{':'}, 2); len(parts) >= 2 {
+		return string(parts[0])
+	}
+
+	// 尝试用 '_' 分割
+	if parts := bytes.SplitN(key, []byte{'_'}, 2); len(parts) >= 2 {
+		return string(parts[0])
+	}
+
+	// 如果没有分隔符，使用整个 key 作为前缀（或者可以使用默认前缀）
+	if len(key) > 0 {
+		// 使用第一个字符作为前缀
+		return string(key[:1])
+	}
+
+	// 默认前缀
+	return "batch"
+}
+
+// walFileWithPrefix 为指定前缀生成 WAL 文件名
+func (t *Tree) walFileWithPrefix(prefix string) string {
+	return path.Join(t.conf.Dir, "walfile", fmt.Sprintf("%d_%s.wal", t.memTableIndex, prefix))
+}
 func (t *Tree) levelBinarySearch(level int, key []byte, start, end int) (*Node, bool) {
 	if start > end {
 		return nil, false

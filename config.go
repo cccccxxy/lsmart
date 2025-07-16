@@ -20,7 +20,6 @@ type Config struct {
 	SSTNumPerLevel   int    // 每层多少个 sstable，默认 10 个
 	SSTDataBlockSize int    // sst table 中 block 大小 默认 16KB
 	SSTFooterSize    int    // sst table 中 footer 部分大小. 固定为 32B
-
 	Filter              filter.Filter                // 过滤器. 默认使用布隆过滤器
 	MemTableConstructor memtable.MemTableConstructor // memtable 构造器，默认为跳表
 }
@@ -31,7 +30,6 @@ func NewConfig(dir string, opts ...ConfigOption) (*Config, error) {
 		Dir:           dir, // sstable 文件所在的目录路径
 		SSTFooterSize: 32,  // 对应 4 个 uint64，共 32 byte
 	}
-
 	// 加载配置项
 	for _, opt := range opts {
 		opt(&c)
@@ -55,7 +53,6 @@ func (c *Config) check() error {
 			return err
 		}
 	}
-
 	// wal 文件目录确保存在
 	walDir := path.Join(c.Dir, "walfile")
 	if _, err := os.ReadDir(walDir); err != nil {
@@ -67,7 +64,6 @@ func (c *Config) check() error {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -95,7 +91,6 @@ func WithSSTDataBlockSize(sstDataBlockSize int) ConfigOption {
 		c.SSTDataBlockSize = sstDataBlockSize
 	}
 }
-
 // WithSSTNumPerLevel 每个 level 层预期最多存放的 sstable 文件个数. 默认为 10 个.
 func WithSSTNumPerLevel(sstNumPerLevel int) ConfigOption {
 	return func(c *Config) {
@@ -120,7 +115,7 @@ func WithMemtableConstructor(memtableConstructor memtable.MemTableConstructor) C
 func repaire(c *Config) {
 	// lsm tree 默认为 7 层.
 	if c.MaxLevel <= 1 {
-		c.MaxLevel = 7
+		c.MaxLevel = 2
 	}
 
 	// level0 层每个 sstable 文件默认大小限制为 1MB.
